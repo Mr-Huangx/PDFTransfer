@@ -12,6 +12,8 @@ from PyQt5.QtWebEngineWidgets import QWebEngineView, QWebEngineSettings  # 用�
 from docx import Document
 from docx2pdf import convert  # 用于将 Word 转换为 PDF
 import re
+from PyQt5.QtCore import QLoggingCategory
+QLoggingCategory.setFilterRules("js=false")
 
 
 # 忽略 DeprecationWarning
@@ -63,7 +65,28 @@ class MainWindow(QMainWindow):
         # 将滚动视图添加到左侧布局
         self.left_layout.addWidget(self.scroll_area)
 
-        # 添加提交按钮
+        # 创建按钮布局（水平布局）
+        button_layout = QHBoxLayout()
+
+        # 添加“更新预览”按钮
+        self.update_preview_button = QPushButton("更新预览")
+        self.update_preview_button.setFont(QFont("Segoe UI", 10))
+        self.update_preview_button.setStyleSheet(
+            "QPushButton {"
+            "padding: 10px;"
+            "background-color: #28a745;"
+            "color: white;"
+            "border: none;"
+            "border-radius: 4px;"
+            "}"
+            "QPushButton:hover {"
+            "background-color: #218838;"
+            "}"
+        )
+        self.update_preview_button.clicked.connect(self.update_preview)
+        button_layout.addWidget(self.update_preview_button)
+
+        # 添加“生成文档”按钮
         self.generate_button = QPushButton("生成文档")
         self.generate_button.setFont(QFont("Segoe UI", 10))
         self.generate_button.setStyleSheet(
@@ -79,7 +102,10 @@ class MainWindow(QMainWindow):
             "}"
         )
         self.generate_button.clicked.connect(self.fill_word_template)
-        self.left_layout.addWidget(self.generate_button, alignment=Qt.AlignBottom)
+        button_layout.addWidget(self.generate_button)
+
+        # 将按钮布局添加到左侧布局
+        self.left_layout.addLayout(button_layout)
 
         # 右侧预览区域（PDF 预览）
         self.preview = QWebEngineView()  # 使用 QWebEngineView 显示 PDF
@@ -183,15 +209,15 @@ class MainWindow(QMainWindow):
             return
 
         # 创建临时 Word 文件
-        temp_docx_path = os.path.join(tempfile.gettempdir(), "temp_template.docx")
-        print("临时 Word 文件路径:", temp_docx_path)
-        self.template_document.save(temp_docx_path)
+        # temp_docx_path = os.path.join(tempfile.gettempdir(), "temp_template.docx")
+        # print("临时 Word 文件路径:", temp_docx_path)
+        # self.template_document.save(temp_docx_path)
 
         # 将 Word 转换为 PDF
         self.temp_pdf_path = os.path.join(tempfile.gettempdir(), "temp_preview.pdf")
         print("临时 PDF 文件路径:", self.temp_pdf_path)
         try:
-            convert(temp_docx_path, self.temp_pdf_path)
+            convert(self.template_document_path, self.temp_pdf_path)
             print("Word 转换为 PDF 成功。")
         except Exception as e:
             print("Word 转换为 PDF 失败:", str(e))
@@ -213,26 +239,65 @@ class MainWindow(QMainWindow):
     def on_load_finished(self, success):
         """PDF 加载完成时的回调函数"""
         if success:
-            print("PDF 文件加载成功。")
+            print("PDF 文件加载回调成功。")
         else:
-            print("PDF 文件加载失败。")
+            print("PDF 文件加载回调失败。")
 
     def update_preview(self):
-        """实时更新预览"""
-        pass
+        """更新预览"""
+        # 第一步，打开document文件
+        # 第二步，替换占位符
+        # 第三步，生成临时文件word
+        # 第四步，展示临时文件PDF
+        doc = Document(self.template_document_path)
 
+        # 替换段落中的占位符
+        for paragraph in doc.paragraphs:
+            for field, input_box in self.inputs.items():
+                placeholder = field
+                if placeholder in paragraph.text:
+                    paragraph.text = paragraph.text.replace(placeholder, input_box.text())
+
+        # 替换表格中的占位符
+        for table in doc.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    for placeholder, input_box in self.inputs.items():
+                        if placeholder in cell.text:
+                            cell.text = cell.text.replace(placeholder, input_box.text())
+
+        # 先转换成临时word
+        temp_docx_path = os.path.join(tempfile.gettempdir(), "temp_template.docx")
+        print(f"更新预览生成的temp_docx_path:{temp_docx_path}")
+
+        # 转换成临时PDF
+        # 删除原始临时PDF
+        os.remove(self.temp_pdf_path)
+        
+        convert(temp_docx_path, self.temp_pdf_path)
+        print("Word 转换为 PDF 成功。")
+        print(f"更新预览生成的temp_docx_path:{self.temp_pdf_path}")
+
+        # 在预览区域显示 PDF
+        pdf_url = QUrl.fromLocalFile(self.temp_pdf_path)
+        print("PDF 文件 URL:", pdf_url.toString())
+        self.preview.setUrl(pdf_url)
+
+        # 检查 QWebEngineView 是否加载成功
+        self.preview.loadFinished.connect(self.on_load_finished)
+        QMessageBox.information(self, "成功", "预览已更新")
 
     def fill_word_template(self):
         """
         填充 Word 文档中的占位符并保存为新的 Word 文件
-        :param template_document_path: 模板 Word 文件路径
-        :param output_path: 填充后的 Word 文件路径
-        :param placeholders: 占位符字典，如 {"{{name}}": "张三"}
+        :self.template_document_path: 模板 Word 文件路径
         """
         doc = Document(self.template_document_path)
 
+        # 获取输出文件路径
         output_path, _ = QFileDialog.getSaveFileName(self, "保存文档", "", "PDF 文件 (*.pdf);;Word 文件 (*.docx)") # 获取输出文件的名称
         print(f"output_path is :{output_path}")
+
         # 替换段落中的占位符
         for paragraph in doc.paragraphs:
             for field, input_box in self.inputs.items():

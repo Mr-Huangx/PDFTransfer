@@ -11,39 +11,47 @@ from PyQt5.QtCore import Qt, QUrl  # 导入 QUrl
 from PyQt5.QtGui import QFont, QDoubleValidator, QIcon
 from PyQt5.QtWebEngineWidgets import QWebEngineView, QWebEngineSettings  # 用于显示 PDF
 from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_PARAGRAPH_ALIGNMENT
+from docx.enum.table import WD_ALIGN_VERTICAL
 from docx2pdf import convert  # 用于将 Word 转换为 PDF
 import re
 from PyQt5.QtCore import QLoggingCategory
 import pandas as pd  # 用于处理 Excel 文件
-from CustomIntInputDialog import CustomIntInputDialog, CustomTextInputDialog
+from CustomTools import CustomIntInputDialog, CustomTextInputDialog, number_to_rmb_upper, format_number_with_commas
+import os
+import win32com.client
+import logging
+import openpyxl 
+from contextlib import redirect_stdout, redirect_stderr
+
+
+logging.basicConfig(format='%(asctime)s - %(filename)s[line:%(lineno)d] - %(levelname)s: %(message)s',
+                    level=logging.DEBUG,
+                    filename='progress.log',
+                    filemode='a')
+
 QLoggingCategory.setFilterRules("js=false")
-
-
-# 忽略 DeprecationWarning
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+
+        # 获取日志记录
+        self.logger = logging.getLogger('progress')
+        self.logger.info(f"程序的路径为：{os.getcwd()}")
 
         # 设置窗口标题和初始大小
         self.setWindowTitle("自动文档填充")
         self.setGeometry(100, 100, 1600, 900)
 
         # 设置icon图标
-        self.setWindowIcon(QIcon("../icon/logo.png"))
+        self.setWindowIcon(QIcon("./icon/logo.png"))
 
         # 初始化 UI
         self.init_ui()
 
         # 初始状态隐藏主页面
         self.central_widget.hide()
-
-        if self.central_widget.isVisible():
-            print("中央空间已显示")
-        else:
-            print("不可见")
 
     def init_ui(self):
         # 添加菜单栏
@@ -296,12 +304,15 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "错误", "所有字段都必须填写数字。")
             return
 
-        # 将值转换为整数
+        # 将值转换为浮点数
         try:
             output_excel_Values = [float(value) for value in output_excel_Values]
         except ValueError:
             QMessageBox.warning(self, "错误", "请输入有效的数字。")
             return
+
+        # 禁用整个应用
+        QApplication.setOverrideCursor(Qt.WaitCursor)
 
         output_excel_fields = self.excel_field_names[:]
         output_excel_fields.append("最终报价")
@@ -324,9 +335,23 @@ class MainWindow(QMainWindow):
         if output_path:
             try:
                 df.to_excel(output_path, index=False)
-                QMessageBox.information(self, "成功", "Excel 文件生成成功。")
+                
             except Exception as e:
+                # 启用整个应用
+                QApplication.restoreOverrideCursor()
                 QMessageBox.critical(self, "错误", f"保存文件时出错: {str(e)}")
+                return
+
+        else:
+            # 启用整个应用
+            QApplication.restoreOverrideCursor()
+            QMessageBox.information(self, "提醒", "请输入有效文件存储路径。")
+            return
+
+        # 启用整个应用
+        QApplication.restoreOverrideCursor()
+        QMessageBox.information(self, "成功", "Excel 文件生成成功。")
+        
 
     def show_help_page(self):
         """显示帮助页面"""
@@ -336,29 +361,37 @@ class MainWindow(QMainWindow):
     def load_template(self):
         """加载 Word 模板文件"""
         file_path, _ = QFileDialog.getOpenFileName(self, "打开 Word 模板", "", "Word 文件 (*.docx)")
+
+        self.logger.info('打开word模板文件路径：' + file_path)
         if file_path:
             # 加载模板
             try:
                 self.template_document = Document(file_path)
-                print("模板文件加载成功。")
+                self.logger.info("模板文件加载成功")
                 self.template_document_path = file_path  # 记录模板文件的地址
 
             except Exception as e:
-                print("模板文件加载失败:", str(e))
+                self.logger.error('加载模板文件失败，模板文件路径为：' + file_path)
                 QMessageBox.information(self, "加载模板失败，请检查文件类型", str(e))
                 return
+
+            # 禁用整个应用
+            QApplication.setOverrideCursor(Qt.WaitCursor)
 
             # 动态生成表单字段
             self.generate_form_fields()
 
-            # 切换QStackWeigt的id
-            self.stacked_widget.setCurrentWidget(self.main_page)
-
             # 生成 PDF 预览
             self.generate_preview_pdf()
 
+            # 切换QStackWeigt的id
+            self.stacked_widget.setCurrentWidget(self.main_page)
+
             # 显示主页面
             self.central_widget.show()
+
+            # 启用整个应用
+            QApplication.restoreOverrideCursor()
 
     def generate_form_fields(self):
         """从模板中读取占位符并动态生成表单字段"""
@@ -418,24 +451,29 @@ class MainWindow(QMainWindow):
             return
 
         # 创建临时 Word 文件
-        self.temp_pdf_path = os.path.join(tempfile.gettempdir(), "temp_preview.pdf")
-        print("临时 PDF 文件路径:", self.temp_pdf_path)
+        self.temp_pdf_path = os.path.join(tempfile.gettempdir(), "tempPreview.pdf")
+        self.logger.info("临时 PDF 文件路径: " + (self.temp_pdf_path))
+        self.logger.info("模板 docx 文件路径: " + (self.template_document_path))
+
         try:
-            convert(self.template_document_path, self.temp_pdf_path)
-            print("Word 转换为 PDF 成功。")
+            # 将 stdout 和 stderr 重定向到文件
+            with open("conversion.log", "w") as log_file:
+                with redirect_stdout(log_file), redirect_stderr(log_file):
+                    convert(self.template_document_path, self. temp_pdf_path)
+            self.logger.info(f"模板 docx 文件{self.template_document_path} 转换为 PDF 成功")
         except Exception as e:
             print("Word 转换为 PDF 失败:", str(e))
             QMessageBox.information(self, "生成预览PDF失败", str(e))
+            self.logger.error(f"模板 docx 文件{self.template_document_path} 转换为 PDF 失败:" + str(e))
             return
 
         # 检查 PDF 文件是否存在
         if not os.path.exists(self.temp_pdf_path):
-            print("错误：PDF 文件未生成。")
+            self.logger.error("错误：PDF 文件未生成。")
             return
 
         # 在预览区域显示 PDF
         pdf_url = QUrl.fromLocalFile(self.temp_pdf_path)
-        print("PDF 文件 URL:", pdf_url.toString())
         self.preview.setUrl(pdf_url)
 
         # 检查 QWebEngineView 是否加载成功
@@ -450,6 +488,10 @@ class MainWindow(QMainWindow):
 
     def update_preview(self):
         """更新预览"""
+        # 让程序进入等待状态
+        # 禁用整个应用
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+
         # 第一步，打开document文件
         # 第二步，替换占位符
         # 第三步，生成临时文件word
@@ -461,48 +503,78 @@ class MainWindow(QMainWindow):
             for field, input_box in self.inputs.items():
                 placeholder = field
                 if placeholder in paragraph.text:
-                    paragraph.text = paragraph.text.replace(placeholder, input_box.text())
-
+                    paragraph.text = paragraph.text.replace(placeholder, format_number_with_commas(input_box.text()))
+                    
         # 替换表格中的占位符
         for table in doc.tables:
             for row in table.rows:
                 for cell in row.cells:
                     for placeholder, input_box in self.inputs.items():
                         if placeholder in cell.text:
-                            cell.text = cell.text.replace(placeholder, input_box.text())
+                            cell.text = cell.text.replace(placeholder, format_number_with_commas(input_box.text()))
+                            if "买方" in cell.text:
+                                for paragraph in cell.paragraphs:
+                                    # 文本加粗
+                                    for run in paragraph.runs:
+                                        run.bold = True
+                                    # 左对齐
+                                    paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
+
+                            else:
+                                for paragraph in cell.paragraphs:
+                                    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+                    if "$合计$" in cell.text:
+                        for placeholder, input_box in self.inputs.items():
+                            if placeholder == "{{合计}}":
+                                cell.text = cell.text.replace("$合计$", number_to_rmb_upper(input_box.text()))
+                        for paragraph in cell.paragraphs:
+                            paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+
 
         # 先转换成临时word
         temp_docx_path = os.path.join(tempfile.gettempdir(), "temp_template.docx")
-        print(f"更新预览生成的temp_docx_path:{temp_docx_path}")
+        self.logger.info(f"更新预览生成的temp_docx_path:{temp_docx_path}")
         doc.save(temp_docx_path)
 
         # 转换成临时PDF
-        # 删除原始临时PDF
-        # os.remove(self.temp_pdf_path)
+        # 将 stdout 和 stderr 重定向到文件
+        try:
+            with open("conversion.log", "w") as log_file:
+                with redirect_stdout(log_file), redirect_stderr(log_file):
+                    convert(temp_docx_path, self.temp_pdf_path)
+            self.logger.info(f"更新预览生成的temp_docx_path:{self.temp_pdf_path}")
 
-        convert(temp_docx_path, self.temp_pdf_path)
-        print("Word 转换为 PDF 成功。")
-        print(f"更新预览生成的temp_docx_path:{self.temp_pdf_path}")
+        except Exception as e:
+            self.logger.error(f"更新预览时，word转换失败: {e}")
+            return
 
         # 在预览区域显示 PDF
         pdf_url = QUrl.fromLocalFile(self.temp_pdf_path)
         print("PDF 文件 URL:", pdf_url.toString())
         self.preview.setUrl(pdf_url)
 
+        # 启用整个应用
+        QApplication.restoreOverrideCursor()
+
         # 检查 QWebEngineView 是否加载成功
         self.preview.loadFinished.connect(self.on_load_finished)
         QMessageBox.information(self, "成功", "预览已更新")
+        self.logger.info("更新预览成功")
 
     def fill_word_template(self):
         """
         填充 Word 文档中的占位符并保存为新的 Word 文件
         :self.template_document_path: 模板 Word 文件路径
         """
+
         doc = Document(self.template_document_path)
 
         # 获取输出文件路径
         output_path, _ = QFileDialog.getSaveFileName(self, "保存文档", "", "PDF 文件 (*.pdf);;Word 文件 (*.docx)")  # 获取输出文件的名称
-        print(f"output_path is :{output_path}")
+
+        # 禁用整个应用
+        QApplication.setOverrideCursor(Qt.WaitCursor)
 
         # 替换段落中的占位符
         for paragraph in doc.paragraphs:
@@ -517,45 +589,80 @@ class MainWindow(QMainWindow):
                 for cell in row.cells:
                     for placeholder, input_box in self.inputs.items():
                         if placeholder in cell.text:
-                            cell.text = cell.text.replace(placeholder, input_box.text())
+                            cell.text = cell.text.replace(placeholder, format_number_with_commas(input_box.text()))
+                            if "买方" in cell.text:
+                                for paragraph in cell.paragraphs:
+                                    # 文本加粗
+                                    for run in paragraph.runs:
+                                        run.bold = True
+                                    # 左对齐
+                                    paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                            else:
+                                for paragraph in cell.paragraphs:
+                                    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+                    if "$合计$" in cell.text:
+                        for placeholder, input_box in self.inputs.items():
+                            if placeholder == "{{合计}}":
+                                cell.text = cell.text.replace("$合计$", number_to_rmb_upper(input_box.text()))
+                        for paragraph in cell.paragraphs:
+                            paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
 
         # 保存填充后的 Word 文件
         if output_path.endswith(".docx"):
             doc.save(output_path)
-            QMessageBox.information(self, "成功", "文档生成成功。")
-
+            self.logger.info("docx文档保存成功")
+            
         else:
             # 先转换成word，再转换成pdf
             temp_docx_path = os.path.join(tempfile.gettempdir(), "temp_template.docx")
-            print("临时 Word 文件路径:", temp_docx_path)
+            self.logger.info("保存文件时，临时 Word 文件路径: ", temp_docx_path)
             try:
                 doc.save(temp_docx_path)
-                convert(temp_docx_path, output_path)
+                # 将 stdout 和 stderr 重定向到文件
+                with open("conversion.log", "w") as log_file:
+                    with redirect_stdout(log_file), redirect_stderr(log_file):
+                        convert(temp_docx_path, output_path)
+                self.logger.info("pdf文档保存成功")
             except Exception as e:
-                QMessageBox.information(self, "文档保存失败", str(e))
+                # 启用整个应用
+                QApplication.restoreOverrideCursor()
 
+                QMessageBox.information(self, "文档保存失败", str(e))
+                self.logger.error("pdf文档保存失败")
+                return
             # 删除临时文件
             try:
                 os.remove(temp_docx_path)
             except Exception as e:
+                # 启用整个应用
+                QApplication.restoreOverrideCursor()
+
                 QMessageBox.information(self, "失败", "删除临时文件失败。")
+                self.logger.error("删除临时文件失败")
                 return
+            
+        # 启用整个应用
+        QApplication.restoreOverrideCursor()
+        QMessageBox.information(self, "成功", "文档生成成功。")
 
-            QMessageBox.information(self, "成功", "文档生成成功。")
-
-
-import ctypes
-
+# import ctypes
+def setup_environment():
+    """动态设置环境变量"""
+    word_path = r"C:\Program Files\Microsoft Office\root\Office16"
+    if os.path.exists(os.path.join(word_path, "WINWORD.EXE")):
+        os.environ["PATH"] += os.pathsep + word_path
+    else:
+        print("未找到 Microsoft Word 的路径，转换可能失败")
 
 if __name__ == "__main__":
     # 确保 QApplication 在任何 QWidget 之前被创建
     app = QApplication(sys.argv)
 
-    # 设置应用程序图标
-    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("自动转换程序")
+    #动态设置环境变量
+    setup_environment()
 
     window = MainWindow()
     window.show()
     sys.exit(app.exec_())
-
 

@@ -19,19 +19,19 @@
 
 ### 2.1 帮助页面
 
-![help_page](.\imgs\help_page.png)
+![help_page](./imgs/help_page.png)
 
 
 
 ### 2.2 模板填写表单页
 
-![main_ui](.\imgs\main_ui.png)
+![main_ui](./imgs/main_ui.png)
 
 
 
 ### 2.3 excel表单填写
 
-![excel_ui](.\imgs\excel_ui.png)
+![excel_ui](./imgs/excel_ui.png)
 
 
 
